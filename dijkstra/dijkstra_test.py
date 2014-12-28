@@ -42,7 +42,7 @@ class DijkstraTest(unittest.TestCase):
             network = Network()
             with open(in_filename) as in_file:
                 pf = PathFinder.from_file(in_file, network)
-                result = pf.shortest_path(distance)
+                result = pf.shortest_path(distance, pf.bidirectional_dijkstra)
                 network.verify_path(result.path, pf.source, pf.destination)
                 out_lines = result.sol_to_lines()
                 gold_filename = re.sub('\.in$', '.gold', in_filename)

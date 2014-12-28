@@ -154,7 +154,7 @@ class PathFinder(object):
         self.source = source
         self.destination = destination
         
-    def shortest_path(self, weight):
+    def shortest_path(self, weight, algo):
         """Returns a PathResult for the shortest path from source to destination. 
         
         Args: 
@@ -165,7 +165,7 @@ class PathFinder(object):
         """
         start_time = time.clock()
         
-        path, num_visited = self.dijkstra(weight, self.network.nodes, 
+        path, num_visited = algo(weight, self.network.nodes, 
                                           self.source, self.destination)
             
         time_used = round(time.clock() - start_time, 3)
@@ -175,6 +175,143 @@ class PathFinder(object):
                                   time_used)
         else:
             return None
+
+
+    def bidirectional_dijkstra(self, weight, nodes, source, destination):
+        """Performs Bi-directional dijkstra's algorithm.
+        It starts from both the ends and at each iteration it maintains
+        two priority queues (one for storing keys in forward direction 
+        of graph and one for storing backward direction of the graph)
+
+        extract_min() for both forward and backward is performed alternatively
+        at each step(order does not matter). A variable min_dist is used which
+        is initiallized with None and its value is updated as soon as the the
+        forward graph and backward graph is met and it is allowed to update
+        if d_forward(u) + weight(u,w) + d_backward(w) < min_dist.
+
+        The stopping condition is if the two extract_min() values sum to greater
+        than or equal to min_dist. This is done because any more extract_min()
+        will only increase the value of min_dist implying that min_dist can no
+        longer be reduced, so it is the min distance
+
+        At the end of the algorithm:
+        - node.visited is True if the node is visited, False otherwise.
+        (Node: node is visited if the shortest path to it is computed.)
+        
+        Args:
+            weight: function for calculating the weight of the edge (u, v).
+            nodes: list of all node in the network.
+            source: the source node in the network.
+            destination: the destination node in the network.
+
+        Returns:
+            A tuple: (the path as a list of nodes from source to destination,
+                      the number of visited nodes)
+        """
+        
+        pq_forward = PriorityQueue()
+        pq_backward = PriorityQueue()
+        
+        dad_forward = {} 
+        dad_backward = {} 
+        for node in nodes:
+            # I think visited flag is not required for nodes.
+            # If implemented then it needs to have two visited flags
+            # one for forward traversal and one for backward traversal
+            node.forward_key_value = None
+            node.backward_key_value = None
+
+        dad_forward[source] = None
+        dad_backward[destination] = None
+        
+        source.forward_key_value = NodeDistancePair(source, 0)
+        destination.backward_key_value = NodeDistancePair(destination, 0)
+
+        pq_forward.insert(source.forward_key_value)
+        pq_backward.insert(destination.backward_key_value)
+
+        # set min_dist to None
+        min_dist = None
+
+        path = [] 
+
+        # this node is the joining node of the forward and backward paths
+        meeting_point = None
+        nodes_visited = 0
+        while len(pq_forward) > 0 and len(pq_forward) > 0:
+            f = pq_forward.extract_min()
+            b = pq_backward.extract_min()
+            f_node, f_dist = f.node, f.distance 
+            b_node, b_dist = b.node, b.distance 
+            nodes_visited += 2 
+            # stopping criteria
+            if min_dist is not None and (f_dist + b_dist >= min_dist):
+                break
+
+            # for the forward edges
+            for child in f_node.adj:
+                # check for d_forward(f_node) + weight(f_node, child) + d_backward(child)
+                if child.backward_key_value is not None and b_dist > child.backward_key_value.distance: # this here can be optimized by using visited flag
+                    # this is now optimized: the logic is if the current distance is greater than the child's
+                    # distance, it means the child is already processed, as dijkstra progresses by increasing distance
+                    if min_dist is None:
+                        min_dist = f_dist + weight(f_node, child) + child.backward_key_value.distance
+                        meeting_point = child
+                        dad_forward[child] = f_node
+                    elif min_dist > (f_dist + weight(f_node, child) + child.backward_key_value.distance):
+                        min_dist = f_dist + weight(f_node, child) + child.backward_key_value.distance
+                        meeting_point = child
+                        dad_forward[child] = f_node # Note here
+
+                if child.forward_key_value is None:
+                    child.forward_key_value = NodeDistancePair(child, f_dist + weight(f_node, child))
+                    pq_forward.insert(child.forward_key_value)
+                    dad_forward[child] = f_node
+
+                elif child.forward_key_value.distance > f_dist + weight(f_node, child):
+                    child.forward_key_value.distance = f_dist + weight(f_node, child)
+                    pq_forward.decrease_key(child.forward_key_value)
+                    dad_forward[child] = f_node
+
+            
+            # for the backward edges
+            for child in b_node.adj:
+                if child.forward_key_value is not None and f_dist > child.forward_key_value.distance:
+                    if min_dist is None:
+                        min_dist = b_dist + weight(b_node, child) + child.forward_key_value.distance
+                        meeting_point = b_node
+                        dad_forward[b_node] = child
+                    
+                    elif min_dist > (b_dist + weight(b_node, child) + child.forward_key_value.distance):
+                        min_dist = b_dist + weight(b_node, child) + child.forward_key_value.distance
+                        meeting_point = b_node 
+                        dad_forward[b_node] = child # the node closer to destination will be the meeting point in both cases 
+                                                # and the meeting pt. will be a part of the forward graph
+
+                if child.backward_key_value is None:
+                    child.backward_key_value = NodeDistancePair(child, b_dist + weight(b_node, child))
+                    pq_backward.insert(child.backward_key_value)
+                    dad_backward[child] = b_node
+
+                elif child.backward_key_value.distance > (b_dist + weight(b_node, child)):
+                    child.backward_key_value.distance = b_dist + weight(b_node, child)
+                    pq_backward.decrease_key(child.backward_key_value)
+                    dad_backward[child] = b_node
+        # insert the forward graph vertices in the path
+        curr = meeting_point
+        while curr is not None:
+            path.append(curr)
+            curr = dad_forward[curr]
+
+        path.reverse()
+
+        curr = dad_backward[meeting_point]
+        while curr is not None:
+            path.append(curr)
+            curr = dad_backward[curr]
+
+        return (path, nodes_visited)
+
 
     def dijkstra(self, weight, nodes, source, destination):
         """Performs Dijkstra's algorithm until it finds the shortest
@@ -195,42 +332,42 @@ class PathFinder(object):
             A tuple: (the path as a list of nodes from source to destination, 
                       the number of visited nodes)
         """
-	Q = PriorityQueue()
-	path = []	
-	parent = {}
-	parent[source] = None
-	num_visited = 0
-	for node in nodes:
-		node.visited = False
-		node.key_value = None
-		
-	source.key_value = NodeDistancePair(source, 0)
-	Q.insert(source.key_value)
-	while len(Q) > 0:
-		curr_key = Q.extract_min()
-		curr_node, curr_dist = curr_key.node, curr_key.distance	
-		curr_node.visited = True
-		num_visited += 1
-		if curr_node is destination:
-			break
-		for child in curr_node.adj:
-			if child.key_value is None:
-				child.distance = curr_dist + weight(curr_node, child)
-				child.key_value = NodeDistancePair(child, child.distance)
-				Q.insert(child.key_value)
-				parent[child] = curr_node
-			elif child.key_value.distance > (curr_dist + weight(curr_node, child)):
-				child.key_value.distance = curr_dist + weight(curr_node, child)
-				parent[child] = curr_node
-				Q.decrease_key(child.key_value)
-					
-	curr = destination
-	while curr is not None:
-		path.append(curr)
-		curr = parent[curr]
-	path.reverse()
+        Q = PriorityQueue()
+        path = []	
+        parent = {}
+        parent[source] = None
+        num_visited = 0
+        for node in nodes:
+            node.visited = False
+            node.key_value = None
+            
+        source.key_value = NodeDistancePair(source, 0)
+        Q.insert(source.key_value)
+        while len(Q) > 0:
+            curr_key = Q.extract_min()
+            curr_node, curr_dist = curr_key.node, curr_key.distance	
+            curr_node.visited = True
+            num_visited += 1
+            if curr_node is destination:
+                break
+            for child in curr_node.adj:
+                if child.key_value is None:
+                    child.distance = curr_dist + weight(curr_node, child)
+                    child.key_value = NodeDistancePair(child, child.distance)
+                    Q.insert(child.key_value)
+                    parent[child] = curr_node
+                elif child.key_value.distance > (curr_dist + weight(curr_node, child)):
+                    child.key_value.distance = curr_dist + weight(curr_node, child)
+                    parent[child] = curr_node
+                    Q.decrease_key(child.key_value)
+                        
+        curr = destination
+        while curr is not None:
+            path.append(curr)
+            curr = parent[curr]
+        path.reverse()
         return (path, num_visited) 
-        
+            
     @staticmethod
     def from_file(file, network):
         """Creates a PathFinder object with source and destination read from 
@@ -351,14 +488,14 @@ if __name__ == '__main__':
     if os.environ.get('TRACE') == 'kml':
         pf = PathFinder.from_file(sys.stdin, network)
         with open('path_flat.kml', 'w') as file:
-            r = pf.shortest_path(distance)
+            r = pf.shortest_path(distance, pf.dijkstra)
             r and file.write(r.to_kml())
         with open('path_curved.kml', 'w') as file:
-            r = pf.shortest_path(distance_curved)
+            r = pf.shortest_path(distance_curved, pf.dijkstra)
             r and file.write(r.to_kml())
     else:
         pf = PathFinder.from_file(sys.stdin, network)
-        r = pf.shortest_path(distance)
+        r = pf.shortest_path(distance, pf.bidirectional_dijkstra)
         if r:
             if os.environ.get('TRACE') == 'sol':
                 r.sol_to_file(sys.stdout)
@@ -366,4 +503,4 @@ if __name__ == '__main__':
                 r.to_file(sys.stdout)
         else:
             print 'No path is found.'
-    
+
